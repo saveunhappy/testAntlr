@@ -30,8 +30,7 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
                 return;
             }
         }
-        // 如果所有作用域都没有，则在当前作用域新建
-        scopes.peek().put(name, value);
+        throw new RuntimeException("Variable '" + name + "' not declared in any scope");
     }
     private Object getVar(String name) {
         for (Map<String, Object> scope : scopes) {
@@ -42,7 +41,8 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     // 便于测试和外部设置变量
     public void setVariable(String name, Object value) {
-        setVar(name, value);
+        // 直接在全局作用域声明变量，兼容测试用例
+        scopes.getLast().put(name, value);
     }
     public Object getVariable(String name) {
         return getVar(name);
@@ -93,8 +93,8 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     public Object visitVariableDecl(BusinessDslParser.VariableDeclContext ctx) {
         String varName = ctx.ID().getText();
         Object value = ctx.expr() != null ? visit(ctx.expr()) : null;
-        setVar(varName, value);
-        // AST: 可返回自定义AST节点
+        scopes.peek().put(varName, value); // 只在当前作用域新建
+        log.info("[Declare] {} = {}", varName, value);
         return null;
     }
 
@@ -127,13 +127,12 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     @Override
     public Object visitForStatement(BusinessDslParser.ForStatementContext ctx) {
-        String varName = ctx.ID().getText();
         Object iterable = visit(ctx.expr());
         if (iterable instanceof List) {
             List<?> list = (List<?>) iterable;
             for (int idx = 0; idx < list.size(); idx++) {
                 enterScope();
-                setVar(varName, idx); // 赋值为下标
+                scopes.peek().put(ctx.ID().getText(), idx); // 自动声明循环变量
                 visit(ctx.block());
                 exitScope();
                 if (hasReturn) break;
@@ -141,7 +140,7 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         } else if (iterable instanceof Map) {
             for (Object key : ((Map<?, ?>) iterable).keySet()) {
                 enterScope();
-                setVar(varName, key);
+                scopes.peek().put(ctx.ID().getText(), key); // 自动声明循环变量
                 visit(ctx.block());
                 exitScope();
                 if (hasReturn) break;
