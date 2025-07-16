@@ -12,6 +12,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 public class DslParserTest {
     private String readDsl(String path) throws Exception {
@@ -49,5 +51,25 @@ public class DslParserTest {
         Object result = visitor.visit((org.antlr.v4.runtime.tree.ParseTree) script.getFunction("calculatePrice").getBody());
         System.out.println("price result: " + result);
         assertNotNull(result);
+    }
+
+    @Test
+    public void testLogicAllSyntax() throws Exception {
+        String dsl = readDsl("scripts/logic.dsl");
+        DslParser parser = new DslParser();
+        DslScript script = parser.parse("logic.dsl", dsl);
+        BusinessDslVisitorImpl visitor = new BusinessDslVisitorImpl("logic.dsl");
+        Object result = visitor.visit((org.antlr.v4.runtime.tree.ParseTree) script.getFunction("logicTest").getBody());
+        assertNotNull(result);
+        assertTrue(result instanceof Map);
+        Map<?,?> map = (Map<?,?>) result;
+        assertEquals(100, ((Number)map.get("result")).intValue()); // if分支
+        assertEquals(6, ((Number)map.get("sum")).intValue()); // for循环累加
+        assertEquals(true, map.get("logic")); // 逻辑表达式
+        assertEquals(true, map.get("eq")); // 相等判断
+        assertEquals(true, map.get("neq")); // 字符串不等
+        assertEquals(10, ((Number)map.get("ox")).intValue()); // 对象属性
+        assertEquals(2, ((Number)map.get("ay")).intValue()); // 数组下标
+        assertNull(map.get("nothing")); // null判断
     }
 }

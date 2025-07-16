@@ -54,24 +54,24 @@ block
     ;
 
 expr
-    : '(' expr ')'                                      # parenExpr
-    | functionCall                                      # funcExpr
-    | expr '[' expr ']'                                # indexExpr
-    | expr '.' ID                                       # memberExpr
-    | op=('-' | '!') expr                              # unaryExpr
-    | expr op=('*' | '/' | '%') expr                   # mulDivExpr
-    | expr op=('+' | '-') expr                         # addSubExpr
-    | expr op=('<' | '>' | '<=' | '>=') expr           # comparisonExpr
-    | expr op=('==' | '!=') expr                       # equalityExpr
-    | expr '&&' expr                                    # andExpr
-    | expr '||' expr                                    # orExpr
-    | ID                                                # idExpr
-    | STRING                                            # stringExpr
-    | NUMBER                                            # numberExpr
-    | array                                             # arrayExpr
-    | object                                            # objectExpr
-    | BOOLEAN                                           # booleanExpr
-    | NULL                                              # nullExpr
+    : expr '||' expr                        # orExpr
+    | expr '&&' expr                        # andExpr
+    | expr op=('==' | '!=') expr            # equalityExpr
+    | expr op=('<' | '>' | '<=' | '>=') expr # comparisonExpr
+    | expr op=('+' | '-') expr              # addSubExpr
+    | expr op=('*' | '/' | '%') expr        # mulDivExpr
+    | op=('-' | '!') expr                   # unaryExpr
+    | expr '[' expr ']'                     # indexExpr
+    | expr '.' ID                           # memberExpr
+    | functionCall                          # funcExpr
+    | '(' expr ')'                          # parenExpr
+    | ID                                    # idExpr
+    | STRING                                # stringExpr
+    | NUMBER                                # numberExpr
+    | array                                 # arrayExpr
+    | object                                # objectExpr
+    | BOOLEAN                               # booleanExpr
+    | NULL                                  # nullExpr
     ;
 
 functionCall

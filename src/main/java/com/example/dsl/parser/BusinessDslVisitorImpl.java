@@ -5,7 +5,6 @@ import com.example.dsl.BusinessDslParser;
 import com.example.model.DslFunction;
 import com.example.model.DslScript;
 import lombok.extern.slf4j.Slf4j;
-import org.antlr.v4.runtime.tree.ParseTree;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -14,19 +13,44 @@ import java.util.*;
 public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     private final DslScript script;
-    // 变量作用域（简单实现，支持嵌套函数时可用栈优化）
-    private final Map<String, Object> variables = new HashMap<>();
-    // return值与标志
-    private Object returnValue = null;
-    private boolean hasReturn = false;
+    // 变量作用域栈，支持嵌套作用域
+    private final Deque<Map<String, Object>> scopes = new ArrayDeque<>();
+
+    // 变量操作：始终操作栈顶作用域
+    private void enterScope() {
+        scopes.push(new HashMap<>());
+    }
+    private void exitScope() {
+        scopes.pop();
+    }
+    private void setVar(String name, Object value) {
+        for (Map<String, Object> scope : scopes) {
+            if (scope.containsKey(name)) {
+                scope.put(name, value);
+                return;
+            }
+        }
+        // 如果所有作用域都没有，则在当前作用域新建
+        scopes.peek().put(name, value);
+    }
+    private Object getVar(String name) {
+        for (Map<String, Object> scope : scopes) {
+            if (scope.containsKey(name)) return scope.get(name);
+        }
+        return null;
+    }
 
     // 便于测试和外部设置变量
     public void setVariable(String name, Object value) {
-        variables.put(name, value);
+        setVar(name, value);
     }
     public Object getVariable(String name) {
-        return variables.get(name);
+        return getVar(name);
     }
+
+    // return值与标志
+    private Object returnValue = null;
+    private boolean hasReturn = false;
 
     public BusinessDslVisitorImpl(String scriptName) {
         script = new DslScript();
@@ -34,6 +58,7 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         script.setCreatedAt(LocalDateTime.now());
         script.setUpdatedAt(LocalDateTime.now());
         script.setEnabled(true);
+        enterScope(); // 全局作用域
     }
 
     @Override
@@ -68,7 +93,7 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     public Object visitVariableDecl(BusinessDslParser.VariableDeclContext ctx) {
         String varName = ctx.ID().getText();
         Object value = ctx.expr() != null ? visit(ctx.expr()) : null;
-        variables.put(varName, value);
+        setVar(varName, value);
         // AST: 可返回自定义AST节点
         return null;
     }
@@ -77,7 +102,8 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     public Object visitAssignmentStmt(BusinessDslParser.AssignmentStmtContext ctx) {
         String varName = ctx.ID().getText();
         Object value = visit(ctx.expr());
-        variables.put(varName, value);
+        setVar(varName, value);
+        log.info("[Assign] {} = {}", varName, value);
         // AST: 可返回自定义AST节点
         return null;
     }
@@ -86,10 +112,15 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     @Override
     public Object visitIfStatement(BusinessDslParser.IfStatementContext ctx) {
         Object cond = visit(ctx.expr());
-        if (Boolean.TRUE.equals(cond)) {
+        log.info("[If] condition: {} => {}", ctx.expr().getText(), cond);
+        if (toBoolean(cond)) {
+            enterScope();
             visit(ctx.block());
+            exitScope();
         } else if (ctx.elseIfBlock() != null) {
+            enterScope();
             visit(ctx.elseIfBlock());
+            exitScope();
         }
         return null;
     }
@@ -98,12 +129,40 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     public Object visitForStatement(BusinessDslParser.ForStatementContext ctx) {
         String varName = ctx.ID().getText();
         Object iterable = visit(ctx.expr());
-        if (iterable instanceof Iterable) {
-            for (Object item : (Iterable<?>) iterable) {
-                variables.put(varName, item);
+        if (iterable instanceof List) {
+            List<?> list = (List<?>) iterable;
+            for (int idx = 0; idx < list.size(); idx++) {
+                enterScope();
+                setVar(varName, idx); // 赋值为下标
                 visit(ctx.block());
+                exitScope();
                 if (hasReturn) break;
             }
+        } else if (iterable instanceof Map) {
+            for (Object key : ((Map<?, ?>) iterable).keySet()) {
+                enterScope();
+                setVar(varName, key);
+                visit(ctx.block());
+                exitScope();
+                if (hasReturn) break;
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public Object visitIndexExpr(BusinessDslParser.IndexExprContext ctx) {
+        Object collection = visit(ctx.expr(0));
+        Object index = visit(ctx.expr(1));
+        if (collection instanceof List && index instanceof Number) {
+            int idx = ((Number) index).intValue();
+            List<?> list = (List<?>) collection;
+            if (idx >= 0 && idx < list.size()) {
+                return list.get(idx);
+            }
+        }
+        if (collection instanceof Map) {
+            return ((Map<?, ?>) collection).get(index);
         }
         return null;
     }
@@ -112,16 +171,19 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     public Object visitReturnStatement(BusinessDslParser.ReturnStatementContext ctx) {
         returnValue = ctx.expr() != null ? visit(ctx.expr()) : null;
         hasReturn = true;
+        log.info("[Return] value: {}", returnValue);
         return returnValue;
     }
 
     @Override
     public Object visitBlock(BusinessDslParser.BlockContext ctx) {
+        enterScope();
         Object last = null;
         for (BusinessDslParser.StatementContext stmt : ctx.statement()) {
             last = visit(stmt);
             if (hasReturn) break;
         }
+        exitScope();
         return hasReturn ? returnValue : last;
     }
 
@@ -145,9 +207,11 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         // 用户自定义函数
         DslFunction function = script.getFunction(funcName);
         if (function != null) {
-            Map<String, Object> oldVars = new HashMap<>(variables);
+            // 保存当前作用域快照
+            Map<String, Object> oldVars = new HashMap<>(scopes.peek());
+            enterScope();
             for (int i = 0; i < function.getParameters().size(); i++) {
-                variables.put(function.getParameters().get(i), args.get(i));
+                setVar(function.getParameters().get(i), args.get(i));
             }
             hasReturn = false;
             returnValue = null;
@@ -158,8 +222,10 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
             Object ret = hasReturn ? returnValue : result;
             hasReturn = false;
             returnValue = null;
-            variables.clear();
-            variables.putAll(oldVars);
+            exitScope();
+            // 恢复上层作用域变量
+            scopes.pop();
+            scopes.push(oldVars);
             return ret;
         }
         return null;
@@ -199,7 +265,7 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     @Override
     public Object visitIdExpr(BusinessDslParser.IdExprContext ctx) {
         String varName = ctx.ID().getText();
-        return variables.get(varName);
+        return getVar(varName);
     }
 
     @Override
@@ -223,10 +289,20 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         Object left = visit(ctx.expr(0));
         Object right = visit(ctx.expr(1));
         String op = ctx.op.getText();
-        if (left == null || right == null) return false;
-        if (op.equals("==")) return left.equals(right);
-        if (op.equals("!=")) return !left.equals(right);
-        return false;
+        boolean result;
+        if (op.equals("==")) {
+            if (left == null) result = (right == null);
+            else if (left instanceof String && right instanceof String) result = left.equals(right);
+            else result = left.equals(right);
+        } else if (op.equals("!=")) {
+            if (left == null) result = (right != null);
+            else if (left instanceof String && right instanceof String) result = !left.equals(right);
+            else result = !left.equals(right);
+        } else {
+            result = false;
+        }
+        log.info("[EqualityExpr] {} {} {} => {}", left, op, right, result);
+        return result;
     }
 
     @Override
@@ -269,15 +345,47 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     @Override
     public Object visitAndExpr(BusinessDslParser.AndExprContext ctx) {
         Object left = visit(ctx.expr(0));
+        if (!toBoolean(left)) return false; // 短路求值
         Object right = visit(ctx.expr(1));
-        return toBoolean(left) && toBoolean(right);
+        return toBoolean(right);
     }
 
     @Override
     public Object visitOrExpr(BusinessDslParser.OrExprContext ctx) {
         Object left = visit(ctx.expr(0));
+        if (toBoolean(left)) return true; // 短路求值
         Object right = visit(ctx.expr(1));
-        return toBoolean(left) || toBoolean(right);
+        return toBoolean(right);
+    }
+
+    @Override
+    public Object visitArrayExpr(BusinessDslParser.ArrayExprContext ctx) {
+        List<Object> list = new ArrayList<>();
+        if (ctx.array().expr() != null) {
+            for (BusinessDslParser.ExprContext exprCtx : ctx.array().expr()) {
+                list.add(visit(exprCtx));
+            }
+        }
+        return list;
+    }
+
+    @Override
+    public Object visitObjectExpr(BusinessDslParser.ObjectExprContext ctx) {
+        Map<String, Object> map = new HashMap<>();
+        if (ctx.object().pair() != null) {
+            for (BusinessDslParser.PairContext pairCtx : ctx.object().pair()) {
+                String key;
+                if (pairCtx.STRING() != null) {
+                    String text = pairCtx.STRING().getText();
+                    key = text.substring(1, text.length() - 1);
+                } else {
+                    key = pairCtx.ID().getText();
+                }
+                Object value = visit(pairCtx.expr());
+                map.put(key, value);
+            }
+        }
+        return map;
     }
 
     // 辅助方法：将对象转为布尔值
