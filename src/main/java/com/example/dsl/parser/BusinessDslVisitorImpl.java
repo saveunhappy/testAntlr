@@ -4,6 +4,7 @@ import com.example.dsl.BusinessDslBaseVisitor;
 import com.example.dsl.BusinessDslParser;
 import com.example.model.DslFunction;
 import com.example.model.DslScript;
+import com.example.dsl.runtime.DslContext;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
@@ -13,40 +14,7 @@ import java.util.*;
 public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     private final DslScript script;
-    // 变量作用域栈，支持嵌套作用域
-    private final Deque<Map<String, Object>> scopes = new ArrayDeque<>();
-
-    // 变量操作：始终操作栈顶作用域
-    private void enterScope() {
-        scopes.push(new HashMap<>());
-    }
-    private void exitScope() {
-        scopes.pop();
-    }
-    private void setVar(String name, Object value) {
-        for (Map<String, Object> scope : scopes) {
-            if (scope.containsKey(name)) {
-                scope.put(name, value);
-                return;
-            }
-        }
-        throw new RuntimeException("Variable '" + name + "' not declared in any scope");
-    }
-    private Object getVar(String name) {
-        for (Map<String, Object> scope : scopes) {
-            if (scope.containsKey(name)) return scope.get(name);
-        }
-        return null;
-    }
-
-    // 便于测试和外部设置变量
-    public void setVariable(String name, Object value) {
-        // 直接在全局作用域声明变量，兼容测试用例
-        scopes.getLast().put(name, value);
-    }
-    public Object getVariable(String name) {
-        return getVar(name);
-    }
+    private final DslContext context;
 
     // return值与标志
     private Object returnValue = null;
@@ -58,7 +26,16 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         script.setCreatedAt(LocalDateTime.now());
         script.setUpdatedAt(LocalDateTime.now());
         script.setEnabled(true);
-        enterScope(); // 全局作用域
+        context = new DslContext(); // 创建全局上下文
+    }
+
+    // 便于测试和外部设置变量
+    public void setVariable(String name, Object value) {
+        context.setVariable(name, value);
+    }
+
+    public Object getVariable(String name) {
+        return context.getVariable(name);
     }
 
     @Override
@@ -78,7 +55,7 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
             ctx.paramList().ID().forEach(id -> function.addParameter(id.getText()));
         }
 
-        // 存储函数体（这里简单存储上下文，实际应用中可能需要更复杂的处理）
+        // 存储函数体
         function.setBody(ctx.block());
 
         // 添加到脚本
@@ -93,7 +70,7 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     public Object visitVariableDecl(BusinessDslParser.VariableDeclContext ctx) {
         String varName = ctx.ID().getText();
         Object value = ctx.expr() != null ? visit(ctx.expr()) : null;
-        scopes.peek().put(varName, value); // 只在当前作用域新建
+        context.setVariable(varName, value);
         log.info("[Declare] {} = {}", varName, value);
         return null;
     }
@@ -102,9 +79,8 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     public Object visitAssignmentStmt(BusinessDslParser.AssignmentStmtContext ctx) {
         String varName = ctx.ID().getText();
         Object value = visit(ctx.expr());
-        setVar(varName, value);
+        context.setVariable(varName, value);
         log.info("[Assign] {} = {}", varName, value);
-        // AST: 可返回自定义AST节点
         return null;
     }
 
@@ -114,15 +90,27 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         Object cond = visit(ctx.expr());
         log.info("[If] condition: {} => {}", ctx.expr().getText(), cond);
         if (toBoolean(cond)) {
-            enterScope();
-            visit(ctx.block());
-            exitScope();
+            context.enterScope();
+            Object result = visit(ctx.block());
+            context.exitScope();
+            return result;
         } else if (ctx.elseIfBlock() != null) {
-            enterScope();
-            visit(ctx.elseIfBlock());
-            exitScope();
+            context.enterScope();
+            Object result = visit(ctx.elseIfBlock());
+            context.exitScope();
+            return result;
         }
         return null;
+    }
+
+    @Override
+    public Object visitMemberExpr(BusinessDslParser.MemberExprContext ctx) {
+        Object obj = visit(ctx.expr());
+        String member = ctx.ID().getText();
+        if (obj instanceof Map) {
+            return ((Map<?, ?>) obj).get(member);
+        }
+        throw new RuntimeException("Cannot access member '" + member + "' of non-object: " + obj);
     }
 
     @Override
@@ -130,19 +118,23 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         Object iterable = visit(ctx.expr());
         if (iterable instanceof List) {
             List<?> list = (List<?>) iterable;
-            for (int idx = 0; idx < list.size(); idx++) {
-                enterScope();
-                scopes.peek().put(ctx.ID().getText(), idx); // 自动声明循环变量
+            for (int i = 0; i < list.size(); i++) {
+                context.enterScope();
+                // 设置循环变量为当前索引
+                context.setVariable(ctx.ID().getText(), i);
+                // 设置当前元素值
+                context.setVariable("current", list.get(i));
                 visit(ctx.block());
-                exitScope();
+                context.exitScope();
                 if (hasReturn) break;
             }
         } else if (iterable instanceof Map) {
-            for (Object key : ((Map<?, ?>) iterable).keySet()) {
-                enterScope();
-                scopes.peek().put(ctx.ID().getText(), key); // 自动声明循环变量
+            for (Map.Entry<?, ?> entry : ((Map<?, ?>) iterable).entrySet()) {
+                context.enterScope();
+                context.setVariable(ctx.ID().getText(), entry.getKey());
+                context.setVariable("current", entry.getValue());
                 visit(ctx.block());
-                exitScope();
+                context.exitScope();
                 if (hasReturn) break;
             }
         }
@@ -159,11 +151,11 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
             if (idx >= 0 && idx < list.size()) {
                 return list.get(idx);
             }
-        }
-        if (collection instanceof Map) {
+            throw new RuntimeException("Array index out of bounds: " + idx);
+        } else if (collection instanceof Map) {
             return ((Map<?, ?>) collection).get(index);
         }
-        return null;
+        throw new RuntimeException("Invalid array/map access: " + collection + "[" + index + "]");
     }
 
     @Override
@@ -176,13 +168,13 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     @Override
     public Object visitBlock(BusinessDslParser.BlockContext ctx) {
-        enterScope();
+        context.enterScope();
         Object last = null;
         for (BusinessDslParser.StatementContext stmt : ctx.statement()) {
             last = visit(stmt);
             if (hasReturn) break;
         }
-        exitScope();
+        context.exitScope();
         return hasReturn ? returnValue : last;
     }
 
@@ -196,21 +188,28 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
                 args.add(visit(exprCtx));
             }
         }
-        // 内置函数
+
+        // 先检查是否是内置函数
+        com.example.dsl.runtime.DslFunction dslFunction = context.getGlobalFunction(funcName);
+        if (dslFunction != null) {
+            return dslFunction.execute(args.toArray());
+        }
+
+        // 检查是否是业务函数
         if ("checkVipStatus".equals(funcName)) {
             return checkVipStatus(args.get(0));
         }
         if ("checkSeason".equals(funcName)) {
             return checkSeason(args.get(0));
         }
+
         // 用户自定义函数
         DslFunction function = script.getFunction(funcName);
         if (function != null) {
-            // 保存当前作用域快照
-            Map<String, Object> oldVars = new HashMap<>(scopes.peek());
-            enterScope();
+            DslContext functionContext = context.createChildContext();
+            // 设置参数
             for (int i = 0; i < function.getParameters().size(); i++) {
-                setVar(function.getParameters().get(i), args.get(i));
+                functionContext.setVariable(function.getParameters().get(i), args.get(i));
             }
             hasReturn = false;
             returnValue = null;
@@ -221,10 +220,6 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
             Object ret = hasReturn ? returnValue : result;
             hasReturn = false;
             returnValue = null;
-            exitScope();
-            // 恢复上层作用域变量
-            scopes.pop();
-            scopes.push(oldVars);
             return ret;
         }
         return null;
@@ -236,12 +231,20 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         Object left = visit(ctx.expr(0));
         Object right = visit(ctx.expr(1));
         String op = ctx.op.getText();
+
+        // 处理数值运算
         if (left instanceof Number && right instanceof Number) {
             double l = ((Number) left).doubleValue();
             double r = ((Number) right).doubleValue();
             return "+".equals(op) ? l + r : l - r;
         }
-        return null;
+
+        // 处理字符串拼接
+        if ("+".equals(op) && (left instanceof String || right instanceof String)) {
+            return String.valueOf(left) + String.valueOf(right);
+        }
+
+        throw new RuntimeException("Invalid operands for " + op + ": " + left + ", " + right);
     }
 
     @Override
@@ -263,8 +266,8 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     @Override
     public Object visitIdExpr(BusinessDslParser.IdExprContext ctx) {
-        String varName = ctx.ID().getText();
-        return getVar(varName);
+        String id = ctx.ID().getText();
+        return context.getVariable(id);
     }
 
     @Override
@@ -389,10 +392,13 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     // 辅助方法：将对象转为布尔值
     private boolean toBoolean(Object obj) {
+        if (obj == null) return false;
         if (obj instanceof Boolean) return (Boolean) obj;
-        if (obj instanceof Number) return ((Number) obj).doubleValue() != 0.0;
+        if (obj instanceof Number) return ((Number) obj).doubleValue() != 0;
         if (obj instanceof String) return !((String) obj).isEmpty();
-        return obj != null;
+        if (obj instanceof Collection) return !((Collection<?>) obj).isEmpty();
+        if (obj instanceof Map) return !((Map<?, ?>) obj).isEmpty();
+        return true;
     }
 
     // ========== AST构建（可选，示例） ========== //
@@ -402,13 +408,12 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     // ========== 内置函数实现 ========== //
     private boolean checkVipStatus(Object userId) {
-        if (userId == null) return false;
-        String uid = userId.toString();
-        return uid.startsWith("VIP");
+        // 模拟VIP检查逻辑
+        return userId != null && userId.toString().startsWith("VIP");
     }
     private boolean checkSeason(Object season) {
-        // 假设当前季节是summer
-        return "summer".equals(season);
+        // 模拟季节检查逻辑
+        return "summer".equals(season) || "winter".equals(season);
     }
 
     @Override
