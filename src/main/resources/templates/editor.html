@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>促销规则编辑器</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.2/lib/codemirror.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.2/theme/dracula.css">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { display: flex; gap: 20px; }
+        .editor-panel { flex: 1; }
+        .result-panel { flex: 1; }
+        textarea { width: 100%; height: 300px; }
+        button { padding: 8px 16px; margin: 5px; }
+        #editor { height: 400px; border: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+<h1>促销规则DSL编辑器</h1>
+
+<div class="container">
+    <div class="editor-panel">
+        <h3>规则脚本</h3>
+        <div>
+            <label for="scriptName">脚本名称:</label>
+            <input type="text" id="scriptName" th:value="${scriptName}">
+        </div>
+        <textarea id="scriptContent" th:text="${scriptContent}"></textarea>
+
+        <div>
+            <button onclick="saveScript()">保存脚本</button>
+            <button onclick="executeScript()">执行测试</button>
+        </div>
+    </div>
+
+    <div class="result-panel">
+        <h3>执行结果</h3>
+        <pre id="executionResult">等待执行...</pre>
+
+        <h3>测试订单数据</h3>
+        <textarea id="orderData" rows="10">
+{
+    "orderId": "order-123",
+    "totalAmount": 299.99
+}
+            </textarea>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.2/lib/codemirror.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.2/mode/clike/clike.js"></script>
+<script>
+    // 初始化代码编辑器
+    const editor = CodeMirror.fromTextArea(document.getElementById('scriptContent'), {
+        mode: 'text/x-java',
+        theme: 'dracula',
+        lineNumbers: true,
+        indentUnit: 4
+    });
+
+    // 保存脚本
+    function saveScript() {
+        const scriptName = document.getElementById('scriptName').value;
+        const scriptContent = editor.getValue();
+
+        fetch('/dsl/save', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `scriptName=${encodeURIComponent(scriptName)}&scriptContent=${encodeURIComponent(scriptContent)}`
+        })
+            .then(response => response.text())
+            .then(result => {
+                alert(result);
+            });
+    }
+
+    // 执行脚本
+    function executeScript() {
+        const scriptName = document.getElementById('scriptName').value;
+        const scriptContent = editor.getValue();
+        const orderData = JSON.parse(document.getElementById('orderData').value);
+
+        document.getElementById('executionResult').textContent = "执行中...";
+
+        fetch('/dsl/execute', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                scriptName: scriptName,
+                scriptContent: scriptContent,
+                ...orderData
+            })
+        })
+            .then(response => response.text())
+            .then(result => {
+                document.getElementById('executionResult').textContent = result;
+            });
+    }
+</script>
+</body>
+</html>

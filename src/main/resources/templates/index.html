@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DSL编辑器</title>
+    <link rel="stylesheet" href="/webjars/bootstrap/5.3.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/webjars/monaco-editor/0.44.0/min/vs/editor/editor.main.css">
+    <style>
+        #editor-container {
+            height: 600px;
+            border: 1px solid #ccc;
+        }
+        .nav-tabs {
+            margin-bottom: 0;
+        }
+        .tab-content {
+            border-left: 1px solid #ddd;
+            border-right: 1px solid #ddd;
+            border-bottom: 1px solid #ddd;
+            padding: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>业务DSL编辑器</h1>
+        
+        <ul class="nav nav-tabs" id="editorTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="editor-tab" data-bs-toggle="tab" data-bs-target="#editor-pane" type="button" role="tab">编辑器</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="debug-tab" data-bs-toggle="tab" data-bs-target="#debug-pane" type="button" role="tab">调试</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="scripts-tab" data-bs-toggle="tab" data-bs-target="#scripts-pane" type="button" role="tab">脚本列表</button>
+            </li>
+        </ul>
+        
+        <div class="tab-content" id="editorTabContent">
+            <!-- 编辑器面板 -->
+            <div class="tab-pane fade show active" id="editor-pane" role="tabpanel">
+                <div class="row mb-3">
+                    <div class="col-md-8">
+                        <div class="input-group">
+                            <span class="input-group-text">脚本名称</span>
+                            <input type="text" id="script-name" class="form-control" placeholder="例如：discount.dsl">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <button id="save-button" class="btn btn-primary">保存</button>
+                        <button id="new-button" class="btn btn-secondary">新建</button>
+                    </div>
+                </div>
+                
+                <div id="editor-container"></div>
+                
+                <div id="status-bar" class="mt-2 alert alert-info d-none"></div>
+            </div>
+            
+            <!-- 调试面板 -->
+            <div class="tab-pane fade" id="debug-pane" role="tabpanel">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h4>函数调用</h4>
+                        <div class="mb-3">
+                            <label for="function-name" class="form-label">函数名称</label>
+                            <input type="text" id="function-name" class="form-control">
+                        </div>
+                        <div class="mb-3">
+                            <label for="function-params" class="form-label">参数 (JSON格式)</label>
+                            <textarea id="function-params" class="form-control" rows="5">{
+  "param1": "value1",
+  "param2": 123
+}</textarea>
+                        </div>
+                        <button id="execute-button" class="btn btn-success">执行</button>
+                    </div>
+                    <div class="col-md-6">
+                        <h4>执行结果</h4>
+                        <pre id="execution-result" class="p-3 bg-light" style="height: 300px; overflow: auto;"></pre>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 脚本列表面板 -->
+            <div class="tab-pane fade" id="scripts-pane" role="tabpanel">
+                <div class="list-group" id="script-list">
+                    <!-- 脚本列表将通过JavaScript动态加载 -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/webjars/jquery/3.7.1/jquery.min.js"></script>
+    <script src="/webjars/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+    <script>var require = { paths: { 'vs': '/webjars/monaco-editor/0.44.0/min/vs' } };</script>
+    <script src="/webjars/monaco-editor/0.44.0/min/vs/loader.js"></script>
+    <script src="/webjars/monaco-editor/0.44.0/min/vs/editor/editor.main.nls.js"></script>
+    <script src="/webjars/monaco-editor/0.44.0/min/vs/editor/editor.main.js"></script>
+    
+    <script>
+        // 当页面加载完成后初始化编辑器
+        $(document).ready(function() {
+            let editor;
+            let currentScriptId = '';
+            
+            // 初始化Monaco编辑器
+            require(['vs/editor/editor.main'], function() {
+                // 注册DSL语言
+                monaco.languages.register({ id: 'businessdsl' });
+                
+                // 定义DSL语法高亮规则
+                monaco.languages.setMonarchTokensProvider('businessdsl', {
+                    tokenizer: {
+                        root: [
+                            [/\/\*/, 'comment', '@comment'],
+                            [/\/\/.*$/, 'comment'],
+                            [/function\b/, 'keyword'],
+                            [/var\b/, 'keyword'],
+                            [/if\b/, 'keyword'],
+                            [/else\b/, 'keyword'],
+                            [/for\b/, 'keyword'],
+                            [/in\b/, 'keyword'],
+                            [/return\b/, 'keyword'],
+                            [/true|false|null/, 'keyword'],
+                            [/[0-9]+\.?[0-9]*/, 'number'],
+                            [/"[^"]*"/, 'string'],
+                            [/[a-zA-Z_][a-zA-Z0-9_]*/, 'identifier'],
+                        ],
+                        comment: [
+                            [/[^\/*]+/, 'comment'],
+                            [/\*\//, 'comment', '@pop'],
+                            [/[\/*]/, 'comment']
+                        ]
+                    }
+                });
+                
+                // 创建编辑器实例
+                editor = monaco.editor.create(document.getElementById('editor-container'), {
+                    value: '// 在这里编写DSL脚本\nfunction hello() {\n    return "Hello, World!";\n}',
+                    language: 'businessdsl',
+                    theme: 'vs',
+                    automaticLayout: true
+                });
+                
+                // 加载脚本列表
+                loadScriptList();
+            });
+            
+            // 保存按钮点击事件
+            $('#save-button').click(function() {
+                const scriptId = $('#script-name').val();
+                if (!scriptId) {
+                    showStatus('请输入脚本名称', 'danger');
+                    return;
+                }
+                
+                const content = editor.getValue();
+                saveScript(scriptId, content);
+            });
+            
+            // 新建按钮点击事件
+            $('#new-button').click(function() {
+                $('#script-name').val('');
+                editor.setValue('// 在这里编写DSL脚本\nfunction main() {\n    return "Hello, World!";\n}');
+                currentScriptId = '';
+            });
+            
+            // 执行按钮点击事件
+            $('#execute-button').click(function() {
+                const scriptId = $('#script-name').val();
+                if (!scriptId) {
+                    showStatus('请先选择或保存脚本', 'danger');
+                    return;
+                }
+                
+                const functionName = $('#function-name').val();
+                if (!functionName) {
+                    showStatus('请输入要执行的函数名称', 'danger');
+                    return;
+                }
+                
+                try {
+                    const params = JSON.parse($('#function-params').val());
+                    executeFunction(scriptId, functionName, params);
+                } catch (e) {
+                    showStatus('参数格式错误: ' + e.message, 'danger');
+                }
+            });
+            
+            // 加载脚本列表
+            function loadScriptList() {
+                $.ajax({
+                    url: '/api/dsl/scripts',
+                    method: 'GET',
+                    success: function(data) {
+                        const scriptList = $('#script-list');
+                        scriptList.empty();
+                        
+                        $.each(data, function(id, script) {
+                            const item = $('<a href="#" class="list-group-item list-group-item-action"></a>')
+                                .text(script.name)
+                                .attr('data-script-id', script.id)
+                                .click(function() {
+                                    loadScript(script.id);
+                                    return false;
+                                });
+                            scriptList.append(item);
+                        });
+                    },
+                    error: function(xhr) {
+                        showStatus('加载脚本列表失败: ' + xhr.responseText, 'danger');
+                    }
+                });
+            }
+            
+            // 加载脚本
+            function loadScript(scriptId) {
+                $.ajax({
+                    url: '/api/dsl/scripts/' + scriptId,
+                    method: 'GET',
+                    success: function(data) {
+                        $('#script-name').val(data.id);
+                        editor.setValue(data.content);
+                        currentScriptId = data.id;
+                        showStatus('脚本加载成功', 'success');
+                    },
+                    error: function(xhr) {
+                        showStatus('加载脚本失败: ' + xhr.responseText, 'danger');
+                    }
+                });
+            }
+            
+            // 保存脚本
+            function saveScript(scriptId, content) {
+                $.ajax({
+                    url: '/api/dsl/scripts/' + scriptId,
+                    method: 'POST',
+                    contentType: 'text/plain',
+                    data: content,
+                    success: function() {
+                        currentScriptId = scriptId;
+                        showStatus('脚本保存成功', 'success');
+                        loadScriptList();
+                    },
+                    error: function(xhr) {
+                        let errorMsg = '保存脚本失败';
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            if (response.error) {
+                                errorMsg += ': ' + response.error;
+                            }
+                        } catch (e) {
+                            errorMsg += ': ' + xhr.responseText;
+                        }
+                        showStatus(errorMsg, 'danger');
+                    }
+                });
+            }
+            
+            // 执行函数
+            function executeFunction(scriptId, functionName, params) {
+                $.ajax({
+                    url: '/api/dsl/execute/' + scriptId + '/' + functionName,
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(params),
+                    success: function(data) {
+                        $('#execution-result').text(JSON.stringify(data, null, 2));
+                    },
+                    error: function(xhr) {
+                        let errorMsg = '执行函数失败';
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            if (response.error) {
+                                errorMsg += ': ' + response.error;
+                            }
+                        } catch (e) {
+                            errorMsg += ': ' + xhr.responseText;
+                        }
+                        $('#execution-result').text(errorMsg);
+                    }
+                });
+            }
+            
+            // 显示状态信息
+            function showStatus(message, type) {
+                const statusBar = $('#status-bar');
+                statusBar.removeClass('d-none alert-info alert-success alert-danger')
+                    .addClass('alert-' + type)
+                    .text(message);
+                
+                // 3秒后自动隐藏
+                setTimeout(function() {
+                    statusBar.addClass('d-none');
+                }, 3000);
+            }
+        });
+    </script>
+</body>
+</html>

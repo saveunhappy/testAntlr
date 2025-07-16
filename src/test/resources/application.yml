@@ -1,0 +1,77 @@
+spring:
+  profiles:
+    active: hjt
+#mybatis:
+#  mapper-locations: classpath:/mapper/**/*.xml
+mybatis-plus:
+  configuration:
+    # 关闭二级缓存
+    cache-enabled: false
+    # 设置本地缓存作用域
+    local-cache-scope: SESSION
+server:
+  port: 8000
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json
+
+
+#spring:
+#  application:
+#    name: business
+#  datasource:
+#    type: com.alibaba.druid.pool.DruidDataSource
+#    driver-class-name: com.mysql.cj.jdbc.Driver
+#    username: root
+#    password: root
+#    url: jdbc:mysql://localhost:3306/opensource_db?characterEncoding=UTF8&autoReconnect=true
+#mybatis-plus:
+#  type-enums-package: com.opensource.qualitytool.enums
+#  mapper-locations: classpath:/mapper/**/*.xml
+#mybatis:
+#  mapper-locations: classpath:/mapper/**/*.xml
+url:
+  webApi: http://localhost
+  fileApi: http://localhost
+# 访问奇安信开放接口验证消息
+user:
+  username: api@bosc.cn
+  password: Oss123!@#
+
+opensource:
+  sonar:
+    scanMachine: http://10.240.111.111
+    scanUrl: http://172.16.156.128:9000
+    searchUrl: http://172.16.156.128:9000/api/issues/search
+    taskUrl: http://172.16.156.128:9000/api/ce/task?id=
+    scanUrlNginx: http://172.16.156.128:9000
+    searchUrlNginx: http://172.16.156.128:9000/api/issues/search
+    taskUrlNginx: http://172.16.156.128:9000/api/ce/task?id=
+    login: admin
+    password: admin
+    sourceEncoding: UTF-8
+    sonarScannerLocation: /opt/homebrew/bin/sonar-scanner
+    scannerTimeout: 180000
+    includeMobileExclusions: "**/*.datasetx,**/*.biz,**/*.mvc,**/*.bizx,**/*.namingsqlx,**/*.sql,**/*.datasetx,**/*.fc,**/*.bcpt,**/*.src,**/**.*btx,**/*.php,**/*.ini,**/*.ts"
+    excludeMobileExclusions: "**/*.datasetx,**/*.biz,**/*.mvc,**/*.bizx,**/*.namingsqlx,**/*.sql,**/*.datasetx,**/*.fc,**/*.bcpt,**/*.src,**/**.*btx,**/*.js,**/*.html,**/*.vue,**/*.ts,**/*.php,**/*.ini,**/*.xml"
+    exportUrl: http://127.0.0.1:9999/business/admin/audit/export?taskId=
+    pdfDirPath: /Users/houjiangtao/devCode/quality-tool/src/main/resources/templates/
+    fontPath: /Users/houjiangtao/devCode/quality-tool/src/main/resources/templates/SourceHanSans-Regular.ttf
+    interceptEnv:
+      - pp
+      - pi
+      - uat
+source:
+  code:
+    local-repository-path: /Users/houjiangtao/tmp/gitRepository/
+    git:
+      username: 13027595769
+      password: Aa925147954
+    svn:
+      username: xjf_0120
+      password: 123456abc
+
+
+
+
+
