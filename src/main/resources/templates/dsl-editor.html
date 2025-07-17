@@ -34,6 +34,7 @@
             padding: 10px;
             min-height: 200px;
             font-family: monospace;
+            white-space: pre-wrap;
         }
         .function-list {
             max-height: 300px;
@@ -52,31 +53,33 @@
                         <input type="text" id="newScriptName" class="form-control" placeholder="新脚本名称">
                         <button class="btn btn-primary btn-sm mt-2" onclick="createNewScript()">新建脚本</button>
                     </div>
-
+                    
                     <h6>脚本列表</h6>
                     <div id="scriptList"></div>
-
+                    
                     <hr>
-
+                    
                     <h6>内置函数</h6>
                     <div class="function-list">
                         <div class="small">
-                            <strong>数学函数:</strong><br>
-                            abs(x), max(x,y), min(x,y), round(x)<br><br>
-
-                            <strong>字符串函数:</strong><br>
-                            length(str), substring(str,start,end), toUpperCase(str), toLowerCase(str)<br><br>
-
+                            <strong>基础函数:</strong><br>
+                            print(message) - 打印消息<br>
+                            sum(array) - 计算数组总和<br>
+                            length(str|array) - 获取长度<br><br>
+                            
                             <strong>业务函数:</strong><br>
-                            calculateDiscount(amount,rate), validateOrder(amount), getCustomerLevel(totalSpent)<br><br>
-
-                            <strong>日志函数:</strong><br>
-                            log(message), logError(message)
+                            checkVipStatus(userId) - 检查VIP状态<br>
+                            checkSeason(season) - 检查季节<br><br>
+                            
+                            <strong>示例变量:</strong><br>
+                            productId - 商品ID<br>
+                            price - 价格<br>
+                            userId - 用户ID<br>
                         </div>
                     </div>
                 </div>
             </div>
-
+            
             <!-- 主编辑区 -->
             <div class="col-md-6">
                 <div class="p-3">
@@ -88,44 +91,60 @@
                             <button class="btn btn-warning" onclick="runScript()">运行</button>
                         </div>
                     </div>
-
+                    
                     <textarea id="editor"></textarea>
-
+                    
                     <div class="mt-3">
                         <h6>执行上下文</h6>
-                        <textarea id="contextEditor" class="form-control" rows="3" placeholder='{"amount": 100, "customerLevel": "VIP"}'></textarea>
+                        <textarea id="contextEditor" class="form-control" rows="3" placeholder='{"productId": "PROD001", "price": 100, "userId": "VIP123"}'></textarea>
                     </div>
                 </div>
             </div>
-
+            
             <!-- 输出区 -->
             <div class="col-md-3">
                 <div class="p-3">
                     <h6>执行结果</h6>
                     <div id="output" class="output-panel"></div>
-
+                    
                     <hr>
-
+                    
                     <h6>示例脚本</h6>
                     <div class="small">
-                        <strong>订单折扣计算:</strong><br>
+                        <strong>折扣计算:</strong><br>
                         <pre style="font-size: 11px;">
-var amount = 1000;
-var discount = calculateDiscount(amount, 0.1);
-log("订单金额: " + amount);
-log("折扣金额: " + discount);
-return amount - discount;</pre>
+var vipDiscount = 0.9;
+var productDiscount = 1.0;
 
-                        <strong>客户等级判断:</strong><br>
-                        <pre style="font-size: 11px;">
-var totalSpent = 8000;
-var level = getCustomerLevel(totalSpent);
-if (level == "VIP") {
-    log("VIP客户享受特殊优惠");
-} else {
-    log("普通客户");
+if (productId == "PROD001") {
+    productDiscount = 0.8;
 }
-return level;</pre>
+
+var isVip = checkVipStatus(userId);
+var finalDiscount = 1.0;
+
+if (isVip) {
+    finalDiscount = vipDiscount;
+}
+
+if (finalDiscount < productDiscount) {
+    finalDiscount = productDiscount;
+}
+
+return price * finalDiscount;</pre>
+                        
+                        <strong>季节判断:</strong><br>
+                        <pre style="font-size: 11px;">
+var season = "summer";
+var isSummer = checkSeason(season);
+
+if (isSummer) {
+    print("夏季商品打折");
+    return price * 0.8;
+} else {
+    print("非夏季正常价");
+    return price;
+}</pre>
                     </div>
                 </div>
             </div>
@@ -138,7 +157,7 @@ return level;</pre>
     <script>
         let editor;
         let currentScript = null;
-
+        
         // 初始化编辑器
         document.addEventListener('DOMContentLoaded', function() {
             editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
@@ -151,23 +170,20 @@ return level;</pre>
                 tabSize: 4,
                 lineWrapping: true
             });
-
+            
             loadScriptList();
         });
-
+        
         // 加载脚本列表
         async function loadScriptList() {
             try {
                 const response = await fetch('/api/dsl/scripts');
-                if (!response.ok) {
-                    throw new Error(`请求失败: ${response.status} ${response.statusText}`);
-                }
                 const data = await response.json();
-
+                
                 if (data.success) {
                     const scriptList = document.getElementById('scriptList');
                     scriptList.innerHTML = '';
-
+                    
                     Object.keys(data.data).forEach(scriptName => {
                         const div = document.createElement('div');
                         div.className = 'script-item';
@@ -178,38 +194,35 @@ return level;</pre>
                 }
             } catch (error) {
                 console.error('加载脚本列表失败:', error);
-                alert(error.message);  // 添加用户可见的错误提示
-                document.getElementById('scriptList').innerHTML = '<div class="text-danger">加载失败，请刷新重试</div>';
+                showOutput('加载脚本列表失败: ' + error.message);
             }
         }
-
+        
         // 加载脚本
         async function loadScript(scriptName) {
             try {
                 const response = await fetch(`/api/dsl/scripts/${scriptName}`);
-                if (!response.ok) {
-                    throw new Error(`请求失败: ${response.status} ${response.statusText}`);
-                }
                 const data = await response.json();
-
+                
                 if (data.success) {
                     editor.setValue(data.data);
                     currentScript = scriptName;
                     document.getElementById('currentScriptName').textContent = scriptName;
-
+                    
                     // 更新选中状态
                     document.querySelectorAll('.script-item').forEach(item => {
                         item.classList.remove('active');
+                        if (item.textContent === scriptName) {
+                            item.classList.add('active');
+                        }
                     });
-                    event.target.classList.add('active');
                 }
             } catch (error) {
                 console.error('加载脚本失败:', error);
-                alert(error.message);  // 添加用户可见的错误提示
-                editor.setValue('// 加载脚本失败\n// ' + error.message);
+                showOutput('加载脚本失败: ' + error.message);
             }
         }
-
+        
         // 创建新脚本
         function createNewScript() {
             const scriptName = document.getElementById('newScriptName').value.trim();
@@ -217,20 +230,21 @@ return level;</pre>
                 alert('请输入脚本名称');
                 return;
             }
-
+            
             editor.setValue('');
             currentScript = scriptName;
             document.getElementById('currentScriptName').textContent = scriptName;
             document.getElementById('newScriptName').value = '';
+            showOutput('创建新脚本: ' + scriptName);
         }
-
+        
         // 保存脚本
         async function saveScript() {
             if (!currentScript) {
                 alert('请先创建或选择脚本');
                 return;
             }
-
+            
             try {
                 const content = editor.getValue();
                 const response = await fetch(`/api/dsl/scripts/${currentScript}`, {
@@ -240,23 +254,20 @@ return level;</pre>
                     },
                     body: JSON.stringify({ content })
                 });
-                if (!response.ok) {  // 新增状态检查
-                    throw new Error(`保存失败: ${response.status} ${response.statusText}`);
-                }
-
+                
                 const data = await response.json();
                 if (data.success) {
-                    alert('保存成功');
+                    showOutput('保存成功');
                     loadScriptList();
                 } else {
-                    alert('保存失败: ' + data.error);
+                    showOutput('保存失败: ' + data.error);
                 }
             } catch (error) {
                 console.error('保存失败:', error);
-                alert(error.message);  // 改进错误提示
+                showOutput('保存失败: ' + error.message);
             }
         }
-
+        
         // 验证脚本
         async function validateScript() {
             try {
@@ -268,63 +279,90 @@ return level;</pre>
                     },
                     body: JSON.stringify({ content })
                 });
-
+                
                 const data = await response.json();
                 if (data.success) {
-                    if (data.valid) {
-                        alert('语法验证通过');
-                    } else {
-                        alert('语法验证失败');
-                    }
+                    showOutput(data.valid ? '语法验证通过' : '语法验证失败');
                 } else {
-                    alert('验证失败: ' + data.error);
+                    showOutput('验证失败: ' + data.error);
                 }
             } catch (error) {
                 console.error('验证失败:', error);
-                alert('验证失败');
+                showOutput('验证失败: ' + error.message);
             }
         }
-
+        
         // 运行脚本
         async function runScript() {
             if (!currentScript) {
                 alert('请先创建或选择脚本');
                 return;
             }
-
+            
             try {
-                const contextText = document.getElementById('contextEditor').value;
                 let context = {};
-
-                if (contextText.trim()) {
-                    try {
-                        context = JSON.parse(contextText);
-                    } catch (e) {
-                        alert('执行上下文JSON格式错误');
+                try {
+                    const contextStr = document.getElementById('contextEditor').value.trim();
+                    if (contextStr) {
+                        context = JSON.parse(contextStr);
+                    }
+                } catch (e) {
+                    showOutput('上下文JSON格式错误: ' + e.message);
+                    return;
+                }
+                
+                showOutput('正在执行...\n请求URL: /api/dsl/scripts/' + currentScript + '/execute\n请求参数: ' + JSON.stringify(context, null, 2));
+                
+                // 添加超时处理
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+                
+                try {
+                    const response = await fetch(`/api/dsl/scripts/${currentScript}/execute`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify(context),
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (!response.ok) {
+                        const text = await response.text();
+                        showOutput('HTTP错误: ' + response.status + '\n响应内容:\n' + text);
                         return;
                     }
-                }
-
-                const response = await fetch(`/api/dsl/scripts/${currentScript}/execute`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(context)
-                });
-
-                const data = await response.json();
-                const output = document.getElementById('output');
-
-                if (data.success) {
-                    output.innerHTML = `<div class="text-success">执行成功:</div><pre>${JSON.stringify(data.data, null, 2)}</pre>`;
-                } else {
-                    output.innerHTML = `<div class="text-danger">执行失败:</div><pre>${data.error}</pre>`;
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        showOutput('执行结果:\n' + JSON.stringify(data.data, null, 2));
+                    } else {
+                        showOutput('执行失败: ' + data.error + '\n堆栈信息:\n' + JSON.stringify(data.stackTrace, null, 2));
+                    }
+                } catch (fetchError) {
+                    if (fetchError.name === 'AbortError') {
+                        showOutput('请求超时');
+                    } else {
+                        throw fetchError;
+                    }
                 }
             } catch (error) {
                 console.error('执行失败:', error);
-                document.getElementById('output').innerHTML = `<div class="text-danger">执行失败:</div><pre>${error.message}</pre>`;
+                showOutput('执行失败:\n错误类型: ' + error.name + 
+                          '\n错误信息: ' + error.message + 
+                          '\n堆栈信息: ' + error.stack +
+                          '\n\n请检查:\n1. 后端服务是否正在运行\n2. 网络连接是否正常\n3. 浏览器控制台是否有其他错误');
             }
+        }
+        
+        // 显示输出
+        function showOutput(message) {
+            const output = document.getElementById('output');
+            output.textContent = message;
+            console.log('输出:', message); // 添加控制台日志
         }
     </script>
 </body>

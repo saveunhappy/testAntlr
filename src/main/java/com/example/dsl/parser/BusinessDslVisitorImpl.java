@@ -39,10 +39,45 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
     }
 
     @Override
-    public DslScript visitProgram(BusinessDslParser.ProgramContext ctx) {
-        // 访问所有语句
-        ctx.statement().forEach(this::visit);
-        return script;
+    public Object visitProgram(BusinessDslParser.ProgramContext ctx) {
+        try {
+            // 访问所有语句，解析函数定义
+            Object result = null;
+            for (BusinessDslParser.StatementContext stmt : ctx.statement()) {
+                result = visit(stmt);
+            }
+
+            // 如果是执行模式，执行指定的函数
+            if (Boolean.TRUE.equals(context.getVariable("__EXECUTE_MODE__"))) {
+                String functionToExecute = (String) context.getVariable("__FUNCTION_TO_EXECUTE__");
+                if (functionToExecute == null) {
+                    throw new RuntimeException("未指定要执行的函数名");
+                }
+
+                DslFunction function = script.getFunction(functionToExecute);
+                if (function == null) {
+                    throw new RuntimeException("函数未找到: " + functionToExecute);
+                }
+
+                // 创建新的执行上下文
+                DslContext executionContext = context.createChildContext();
+                
+                // 执行函数
+                if (function.getBody() instanceof org.antlr.v4.runtime.tree.ParseTree) {
+                    hasReturn = false;
+                    returnValue = null;
+                    result = visit((org.antlr.v4.runtime.tree.ParseTree) function.getBody());
+                    return hasReturn ? returnValue : result;
+                } else {
+                    throw new RuntimeException("函数体格式错误");
+                }
+            }
+
+            return script;
+        } catch (Exception e) {
+            log.error("执行程序失败: {}", e.getMessage(), e);
+            throw new RuntimeException("执行程序失败: " + e.getMessage(), e);
+        }
     }
 
     @Override
@@ -62,7 +97,22 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
         script.addFunction(function);
         log.info("解析到函数: {}", functionName);
 
-        return function;
+        // 如果是执行模式且是目标函数，直接执行它
+        if (context.getVariable("__EXECUTE_MODE__") != null) {
+            String functionToExecute = (String) context.getVariable("__FUNCTION_TO_EXECUTE__");
+            if (functionName.equals(functionToExecute)) {
+                // 创建新的执行上下文
+                DslContext executionContext = context.createChildContext();
+                
+                // 执行函数
+                hasReturn = false;
+                returnValue = null;
+                Object result = visit(ctx.block());
+                return hasReturn ? returnValue : result;
+            }
+        }
+
+        return null;
     }
 
     // ========== 变量声明与赋值 ========== //
@@ -160,7 +210,23 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     @Override
     public Object visitReturnStatement(BusinessDslParser.ReturnStatementContext ctx) {
-        returnValue = ctx.expr() != null ? visit(ctx.expr()) : null;
+        if (ctx.expr() != null) {
+            returnValue = visit(ctx.expr());
+            // 如果返回值是Map，保持原样返回
+            if (returnValue instanceof Map) {
+                hasReturn = true;
+                log.info("[Return] value: {}", returnValue);
+                return returnValue;
+            }
+            // 如果是其他类型的返回值，也需要包装成Map
+            Map<String, Object> result = new HashMap<>();
+            result.put("result", returnValue);
+            returnValue = result;
+        } else {
+            Map<String, Object> result = new HashMap<>();
+            result.put("result", null);
+            returnValue = result;
+        }
         hasReturn = true;
         log.info("[Return] value: {}", returnValue);
         return returnValue;
@@ -408,12 +474,13 @@ public class BusinessDslVisitorImpl extends BusinessDslBaseVisitor<Object> {
 
     // ========== 内置函数实现 ========== //
     private boolean checkVipStatus(Object userId) {
-        // 模拟VIP检查逻辑
-        return userId != null && userId.toString().startsWith("VIP");
+        // 简单示例：假设USER001是VIP
+        return userId != null && "USER001".equals(userId.toString());
     }
+
     private boolean checkSeason(Object season) {
-        // 模拟季节检查逻辑
-        return "summer".equals(season) || "winter".equals(season);
+        // 简单示例：假设当前是夏季
+        return season != null && "summer".equals(season.toString());
     }
 
     @Override

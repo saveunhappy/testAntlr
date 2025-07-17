@@ -53,26 +53,27 @@ public class DslScriptLoader {
     }
 
     // 加载单个脚本
-    public DslScript loadScript(Path path) {
+    public Object loadScript(Path path) {
         try {
-
             String scriptId = path.getFileName().toString();
-// 替换 Files.readString(path)
+            // 替换 Files.readString(path)
             byte[] fileBytes = Files.readAllBytes(path);
             String content = new String(fileBytes, StandardCharsets.UTF_8);
             long lastModified = Files.getLastModifiedTime(path).toMillis();
 
             // 解析脚本
-            DslScript script = dslParser.parse(scriptId, content);
+            Object result = dslParser.parse(scriptId, content);
 
-            // 加载到引擎
-            dslEngine.loadScript(script);
+            // 如果是DslScript，加载到引擎
+            if (result instanceof DslScript) {
+                DslScript script = (DslScript) result;
+                dslEngine.loadScript(script);
+                // 记录最后修改时间
+                scriptLastModified.put(scriptId, lastModified);
+                log.info("加载脚本: {}", scriptId);
+            }
 
-            // 记录最后修改时间
-            scriptLastModified.put(scriptId, lastModified);
-
-            log.info("加载脚本: {}", scriptId);
-            return script;
+            return result;
         } catch (IOException e) {
             log.error("读取脚本文件失败: {}", e.getMessage(), e);
             return null;

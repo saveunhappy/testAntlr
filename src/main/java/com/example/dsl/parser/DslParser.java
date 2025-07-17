@@ -13,8 +13,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class DslParser {
 
-
-    public DslScript parse(String scriptName, String content) {
+    public Object parse(String scriptName, String content) {
         try {
             // 创建词法分析器
             BusinessDslLexer lexer = new BusinessDslLexer(CharStreams.fromString(content));
@@ -30,10 +29,16 @@ public class DslParser {
 
             // 创建访问者并访问解析树
             BusinessDslVisitorImpl visitor = new BusinessDslVisitorImpl(scriptName);
-            DslScript script = (DslScript) visitor.visit(tree);
-            script.setContent(content);
-
-            return script;
+            
+            // 如果是执行模式，设置执行标志
+            if (Boolean.TRUE.equals(visitor.getVariable("__EXECUTE_MODE__"))) {
+                return visitor.visit(tree);
+            } else {
+                // 如果是解析模式，返回脚本对象
+                DslScript script = (DslScript) visitor.visit(tree);
+                script.setContent(content);
+                return script;
+            }
         } catch (Exception e) {
             log.error("解析DSL脚本失败: {}", e.getMessage(), e);
             throw new RuntimeException("解析DSL脚本失败: " + e.getMessage(), e);

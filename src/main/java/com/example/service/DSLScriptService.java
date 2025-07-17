@@ -1,196 +1,189 @@
 package com.example.service;
 
+import com.example.dsl.BusinessDslLexer;
+import com.example.dsl.BusinessDslParser;
+import com.example.dsl.parser.BusinessDslVisitorImpl;
+import com.example.dsl.parser.DslParser;
+import com.example.model.DslScript;
 import lombok.extern.slf4j.Slf4j;
+import org.antlr.v4.runtime.CharStreams;
+import org.antlr.v4.runtime.CommonTokenStream;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PostConstruct;
 import java.io.IOException;
-import java.nio.file.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
- * DSL脚本管理服务
- * 负责脚本的存储、加载、执行和热更新
+ * DSL脚本服务
+ * 负责脚本的加载、保存、验证和执行
  */
 @Slf4j
 @Service
 public class DSLScriptService {
-
-//    @Autowired
-//    private DSLExecutionEngine executionEngine;
-
-    private final Map<String, String> scriptCache = new ConcurrentHashMap<>();
-    private final Path scriptsDir = Paths.get("scripts");
-    private WatchService watchService;
-
-    @PostConstruct
-    public void init() {
-        try {
-            // 创建脚本目录
-            if (!Files.exists(scriptsDir)) {
-                Files.createDirectories(scriptsDir);
-            }
-
-            // 初始化文件监听
-            initFileWatcher();
-
-            // 加载现有脚本
-            loadExistingScripts();
-
-            log.info("DSL脚本服务初始化完成");
-        } catch (IOException e) {
-            log.error("初始化DSL脚本服务失败", e);
-        }
+    
+    @Value("${dsl.scripts.path:scripts}")
+    private String scriptsPath;
+    
+    private final DslParser dslParser;
+    
+    public DSLScriptService(DslParser dslParser) {
+        this.dslParser = dslParser;
     }
-
+    
     /**
-     * 初始化文件监听器
+     * 获取所有脚本列表
      */
-    private void initFileWatcher() throws IOException {
-        watchService = FileSystems.getDefault().newWatchService();
-        scriptsDir.register(watchService, StandardWatchEventKinds.ENTRY_CREATE,
-                           StandardWatchEventKinds.ENTRY_MODIFY, StandardWatchEventKinds.ENTRY_DELETE);
-
-        // 启动监听线程
-        Thread watcherThread = new Thread(() -> {
-            try {
-                while (true) {
-                    WatchKey key = watchService.take();
-                    for (WatchEvent<?> event : key.pollEvents()) {
-                        WatchEvent.Kind<?> kind = event.kind();
-                        if (kind == StandardWatchEventKinds.OVERFLOW) {
-                            continue;
-                        }
-
-                        Path fileName = (Path) event.context();
-                        Path fullPath = scriptsDir.resolve(fileName);
-
-                        if (kind == StandardWatchEventKinds.ENTRY_CREATE ||
-                            kind == StandardWatchEventKinds.ENTRY_MODIFY) {
-                            loadScript(fileName.toString());
-                            log.info("脚本文件更新: {}", fileName);
-                        } else if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
-                            scriptCache.remove(fileName.toString());
-                            log.info("脚本文件删除: {}", fileName);
-                        }
-                    }
-                    key.reset();
+    public Map<String, String> listScripts() throws IOException {
+        Path scriptDir = Paths.get(scriptsPath);
+        if (!Files.exists(scriptDir)) {
+            Files.createDirectories(scriptDir);
+        }
+        
+        Map<String, String> scripts = new HashMap<>();
+        Files.list(scriptDir)
+            .filter(path -> path.toString().endsWith(".dsl"))
+            .forEach(path -> {
+                try {
+                    String content = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+                    scripts.put(path.getFileName().toString(), content);
+                } catch (IOException e) {
+                    log.error("读取脚本失败: {}", path, e);
                 }
-            } catch (InterruptedException e) {
-                log.error("文件监听线程被中断", e);
-            }
-        });
-        watcherThread.setDaemon(true);
-        watcherThread.start();
+            });
+        return scripts;
     }
-
-    /**
-     * 加载现有脚本
-     */
-    private void loadExistingScripts() {
-        try {
-            Files.walk(scriptsDir, 1)
-                .filter(path -> path.toString().endsWith(".dsl"))
-                .forEach(path -> {
-                    String fileName = path.getFileName().toString();
-                    loadScript(fileName);
-                });
-        } catch (IOException e) {
-            log.error("加载现有脚本失败", e);
-        }
-    }
-
-    /**
-     * 加载脚本文件
-     */
-    private void loadScript(String fileName) {
-        try {
-            Path scriptPath = scriptsDir.resolve(fileName);
-            if (Files.exists(scriptPath)) {
-                String content = new String(Files.readAllBytes(scriptPath));
-                scriptCache.put(fileName, content);
-                log.info("加载脚本: {}", fileName);
-            }
-        } catch (IOException e) {
-            log.error("加载脚本失败: {}", fileName, e);
-        }
-    }
-
-    /**
-     * 保存脚本
-     */
-    public void saveScript(String scriptName, String content) {
-        try {
-            Path scriptPath = scriptsDir.resolve(scriptName + ".dsl");
-            Files.write(scriptPath, content.getBytes());
-            scriptCache.put(scriptName + ".dsl", content);
-            log.info("保存脚本: {}", scriptName);
-        } catch (IOException e) {
-            log.error("保存脚本失败: {}", scriptName, e);
-            throw new RuntimeException("保存脚本失败", e);
-        }
-    }
-
+    
     /**
      * 获取脚本内容
      */
-    public String getScript(String scriptName) {
-        String fileName = scriptName.endsWith(".dsl") ? scriptName : scriptName + ".dsl";
-        return scriptCache.get(fileName);
+    public String getScript(String scriptName) throws IOException {
+        Path scriptPath = Paths.get(scriptsPath, scriptName);
+        if (!Files.exists(scriptPath)) {
+            return null;
+        }
+        return new String(Files.readAllBytes(scriptPath), StandardCharsets.UTF_8);
     }
-
+    
+    /**
+     * 保存脚本
+     */
+    public void saveScript(String scriptName, String content) throws IOException {
+        Path scriptDir = Paths.get(scriptsPath);
+        if (!Files.exists(scriptDir)) {
+            Files.createDirectories(scriptDir);
+        }
+        
+        // 确保脚本名称以.dsl结尾
+        if (!scriptName.endsWith(".dsl")) {
+            scriptName = scriptName + ".dsl";
+        }
+        
+        Path scriptPath = scriptDir.resolve(scriptName);
+        Files.write(scriptPath, content.getBytes(StandardCharsets.UTF_8));
+    }
+    
     /**
      * 删除脚本
      */
-    public void deleteScript(String scriptName) {
-        try {
-            String fileName = scriptName.endsWith(".dsl") ? scriptName : scriptName + ".dsl";
-            Path scriptPath = scriptsDir.resolve(fileName);
-            Files.deleteIfExists(scriptPath);
-            scriptCache.remove(fileName);
-            log.info("删除脚本: {}", scriptName);
-        } catch (IOException e) {
-            log.error("删除脚本失败: {}", scriptName, e);
-            throw new RuntimeException("删除脚本失败", e);
+    public void deleteScript(String scriptName) throws IOException {
+        Path scriptPath = Paths.get(scriptsPath, scriptName);
+        if (Files.exists(scriptPath)) {
+            Files.delete(scriptPath);
         }
     }
-
-    /**
-     * 列出所有脚本
-     */
-    public Map<String, String> listScripts() {
-        Map<String, String> scripts = new HashMap<>();
-        scriptCache.forEach((fileName, content) -> {
-            String scriptName = fileName.replace(".dsl", "");
-            scripts.put(scriptName, content);
-        });
-        return scripts;
-    }
-
+    
     /**
      * 执行脚本
      */
-//    public Object executeScript(String scriptName, Map<String, Object> context) {
-//        String content = getScript(scriptName);
-//        if (content == null) {
-//            throw new DSLExecutionException("脚本不存在: " + scriptName);
-//        }
-//
-//        return executionEngine.executeScript(scriptName, content, context);
-//    }
-//
-//    /**
-//     * 验证脚本语法
-//     */
-//    public boolean validateScript(String content) {
-//        try {
-//            executionEngine.executeScript("validation", content, new HashMap<>());
-//            return true;
-//        } catch (Exception e) {
-//            log.warn("脚本语法验证失败: {}", e.getMessage());
-//            return false;
-//        }
-//    }
+    public Object executeScript(String scriptName, Map<String, Object> context) throws Exception {
+        String content = getScript(scriptName);
+        if (content == null) {
+            throw new IllegalArgumentException("脚本不存在: " + scriptName);
+        }
+
+        // 创建访问者
+        BusinessDslVisitorImpl visitor = new BusinessDslVisitorImpl(scriptName);
+        
+        // 设置执行模式标志
+        visitor.setVariable("__EXECUTE_MODE__", true);
+        
+        // 根据脚本名称确定要执行的函数
+        if (scriptName.equals("pricing.dsl")) {
+            visitor.setVariable("__FUNCTION_TO_EXECUTE__", "calculatePrice");
+        } else if (scriptName.equals("discount.dsl")) {
+            visitor.setVariable("__FUNCTION_TO_EXECUTE__", "calculateDiscount");
+        } else if (scriptName.equals("logic.dsl")) {
+            visitor.setVariable("__FUNCTION_TO_EXECUTE__", "logicTest");
+        }
+        
+        // 设置上下文变量
+        if (context != null) {
+            context.forEach(visitor::setVariable);
+        }
+
+        // 创建词法分析器
+        BusinessDslLexer lexer = new BusinessDslLexer(CharStreams.fromString(content));
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        BusinessDslParser parser = new BusinessDslParser(tokens);
+        
+        // 获取解析树并执行
+        Object result = visitor.visit(parser.program());
+        
+        // 如果结果不是Map类型，将其包装成Map
+        if (!(result instanceof Map)) {
+            Map<String, Object> wrappedResult = new HashMap<>();
+            wrappedResult.put("result", result);
+            return wrappedResult;
+        }
+        
+        return result;
+    }
+
+    /**
+     * 加载脚本
+     */
+    public DslScript loadScript(String scriptName) throws Exception {
+        String content = getScript(scriptName);
+        if (content == null) {
+            throw new IllegalArgumentException("脚本不存在: " + scriptName);
+        }
+        
+        // 创建访问者（不设置执行模式，只解析脚本）
+        BusinessDslVisitorImpl visitor = new BusinessDslVisitorImpl(scriptName);
+        
+        // 创建词法分析器
+        BusinessDslLexer lexer = new BusinessDslLexer(CharStreams.fromString(content));
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        BusinessDslParser parser = new BusinessDslParser(tokens);
+        
+        // 获取解析树并访问
+        Object result = visitor.visit(parser.program());
+        
+        if (result instanceof DslScript) {
+            DslScript script = (DslScript) result;
+            script.setContent(content);
+            return script;
+        }
+        throw new RuntimeException("解析脚本失败: 返回类型不是DslScript");
+    }
+    
+    /**
+     * 验证脚本语法
+     */
+    public boolean validateScript(String content) {
+        try {
+            dslParser.parse("validate.dsl", content);
+            return true;
+        } catch (Exception e) {
+            log.error("脚本语法错误", e);
+            return false;
+        }
+    }
 }
